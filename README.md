@@ -17,11 +17,14 @@ A React + TypeScript + Vite static quiz app for an English Word Choice Quiz, tar
 
 The app integrates with `window.QuizzesHubAdaptive` and `window.QuizzesHubProgress`:
 
+- **`window.QuizzesHubAccessReady`** - required before the React app renders. The quiz must be opened by an assigned Quizzes Hub user.
 - **`window.QuizzesHubAdaptiveReady`** - awaited briefly at quiz start; `question_keys` from the hub are honored first when matched against the word bank, then the round is filled with shuffled bank entries.
 - **`window.QuizzesHubAdaptive.recordAttempt(attempts)`** - called at quiz end with per-question `{ question: { key }, correct }` items. Used in preference.
 - **`window.QuizzesHubProgress.record(payload)`** - fallback when adaptive record is absent or returns non-ok. Payload includes `quizId`, `score`, `total`, `level`, and detailed `details[]`.
 
 `details[]` items include: `key`, `word`, `clue`, `tier`, `selected`, `expected`, `correct`.
+
+The page loads Quizzes Hub scripts in this order: `config.js`, `access-guard.js`, `progress-client.js`, `adaptive-client.js`, then the Vite module.
 
 ## Getting Started
 

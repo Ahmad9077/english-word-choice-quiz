@@ -152,6 +152,10 @@ async function pickQuestions(level: Tier | 'mixed'): Promise<WordEntry[]> {
 
 type Screen = 'start' | 'quiz' | 'results'
 
+type AppProps = {
+  initialLevel: Tier
+}
+
 interface QuestionState {
   entry: WordEntry
   choices: string[]
@@ -159,9 +163,9 @@ interface QuestionState {
   locked: boolean
 }
 
-export default function App() {
+export default function App({ initialLevel }: AppProps) {
   const [screen, setScreen] = useState<Screen>('start')
-  const [level, setLevel] = useState<Tier | 'mixed'>('mixed')
+  const [level] = useState<Tier>(initialLevel)
   const [questions, setQuestions] = useState<QuestionState[]>([])
   const [qIndex, setQIndex] = useState(0)
   const [details, setDetails] = useState<HubDetail[]>([])
@@ -248,7 +252,6 @@ export default function App() {
       <div className="quiz-shell">
         <StartScreen
           level={level}
-          onLevelChange={setLevel}
           onStart={handleStart}
         />
       </div>
@@ -291,12 +294,11 @@ export default function App() {
 }
 
 interface StartScreenProps {
-  level: Tier | 'mixed'
-  onLevelChange: (l: Tier | 'mixed') => void
+  level: Tier
   onStart: () => void
 }
 
-function StartScreen({ level, onLevelChange, onStart }: StartScreenProps) {
+function StartScreen({ level, onStart }: StartScreenProps) {
   return (
     <div className="start-screen">
       <img
@@ -308,18 +310,9 @@ function StartScreen({ level, onLevelChange, onStart }: StartScreenProps) {
       <h1>English Word Choice</h1>
       <p>Listen to the word, read the clue, then choose the correct spelling.</p>
 
-      <div className="level-select">
-        <label htmlFor="level-select">Choose a level</label>
-        <select
-          id="level-select"
-          value={level}
-          onChange={e => onLevelChange(e.target.value as Tier | 'mixed')}
-        >
-          <option value="mixed">Mixed (All levels)</option>
-          <option value="easy">Easy</option>
-          <option value="medium">Medium</option>
-          <option value="hard">Hard</option>
-        </select>
+      <div className="assigned-level" aria-label={`Assigned level ${level}`}>
+        <span>Assigned level</span>
+        <strong>{level}</strong>
       </div>
 
       <button className="btn-primary" onClick={onStart}>
@@ -471,7 +464,7 @@ function ResultsScreen({
         </button>
         <button className="btn-secondary" onClick={onRestart}>
           <RotateCcw size={16} />
-          Change Level
+          Back to Start
         </button>
       </div>
     </div>
