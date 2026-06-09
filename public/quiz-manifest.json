@@ -1,0 +1,25 @@
+{
+  "id": "english-word-choice",
+  "quizId": "english-word-choice",
+  "title": "English Word Choice Quiz",
+  "description": "Practice English word recognition by choosing the correct spelling from close near-miss options.",
+  "recommendedAge": "8+",
+  "targetAge": "8+",
+  "basePath": "/english-word-choice-quiz/",
+  "route": "/english-word-choice-quiz/",
+  "sessionSize": 15,
+  "questionsPerRound": 15,
+  "tiers": ["easy", "medium", "hard"],
+  "capabilities": {
+    "audio": true,
+    "adaptive": true,
+    "progress": true,
+    "answerReview": true
+  },
+  "adaptive": {
+    "readyPromise": "window.QuizzesHubAdaptiveReady",
+    "recordAttempt": "window.QuizzesHubAdaptive.recordAttempt",
+    "questionKeyField": "question.key"
+  },
+  "version": "1.0.0"
+}
