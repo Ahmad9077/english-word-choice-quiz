@@ -49,7 +49,36 @@ declare global {
       recordAttempt: (attempts: HubAttemptItem[]) => Promise<HubResult> | undefined
     }
     QuizzesHubAdaptiveReady?: Promise<{ question_keys?: string[] } | undefined>
+    QuizzesHubChallenge?: {
+      active: boolean
+      currentUserId: string | null
+      canAnswer: () => boolean
+      onChange: (listener: (state: ChallengeState) => void) => () => void
+      openHub: () => void
+      submitAnswer: (answer: { answerText: string; isCorrect: boolean }) => Promise<HubResult>
+    }
+    QuizzesHubChallengeReady?: Promise<ChallengeState>
   }
+}
+
+interface ChallengePlayer {
+  display_name: string
+  user_id: string
+  wrong_count: number
+}
+
+interface ChallengeState {
+  current_answering_user_id: string | null
+  current_question_key: string | null
+  current_turn_index: number
+  last_turn?: {
+    answering_player_id: string
+    is_correct: boolean
+    question_key: string
+  } | null
+  players: ChallengePlayer[]
+  status: 'waiting' | 'active' | 'finished' | 'abandoned'
+  winner_id: string | null
 }
 
 const QUIZ_ID = 'english-word-choice'
@@ -164,12 +193,15 @@ interface QuestionState {
 }
 
 export default function App({ initialLevel }: AppProps) {
-  const [screen, setScreen] = useState<Screen>('start')
+  const isChallengeMode = Boolean(window.QuizzesHubChallenge?.active)
+  const [screen, setScreen] = useState<Screen>(isChallengeMode ? 'quiz' : 'start')
   const [level] = useState<Tier>(initialLevel)
   const [questions, setQuestions] = useState<QuestionState[]>([])
   const [qIndex, setQIndex] = useState(0)
   const [details, setDetails] = useState<HubDetail[]>([])
   const [speaking, setSpeaking] = useState(false)
+  const [challengeState, setChallengeState] = useState<ChallengeState | null>(null)
+  const [challengeError, setChallengeError] = useState<string | null>(null)
 
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null)
 
@@ -193,6 +225,8 @@ export default function App({ initialLevel }: AppProps) {
   }, [])
 
   const handleStart = useCallback(async () => {
+    if (isChallengeMode) return
+
     const qs = await pickQuestions(level)
     setQuestions(qs.map(entry => ({
       entry,
@@ -203,10 +237,11 @@ export default function App({ initialLevel }: AppProps) {
     setQIndex(0)
     setDetails([])
     setScreen('quiz')
-  }, [level])
+  }, [isChallengeMode, level])
 
   const handleChoice = useCallback((choice: string) => {
     if (!current || current.locked) return
+    if (isChallengeMode && !window.QuizzesHubChallenge?.canAnswer()) return
 
     const correct = choice === current.entry.word
 
@@ -228,9 +263,25 @@ export default function App({ initialLevel }: AppProps) {
           : q
       )
     )
-  }, [current, qIndex])
+
+    if (isChallengeMode) {
+      void window.QuizzesHubChallenge?.submitAnswer({
+        answerText: choice,
+        isCorrect: correct,
+      }).then((result) => {
+        if (!result?.ok) {
+          setChallengeError(result?.reason || 'Could not submit answer.')
+        }
+      })
+    }
+  }, [current, isChallengeMode, qIndex])
 
   const handleNext = useCallback(() => {
+    if (isChallengeMode) {
+      window.QuizzesHubChallenge?.openHub()
+      return
+    }
+
     window.speechSynthesis?.cancel()
     setSpeaking(false)
     if (qIndex + 1 >= QUESTIONS_PER_ROUND) {
@@ -239,15 +290,70 @@ export default function App({ initialLevel }: AppProps) {
     } else {
       setQIndex(i => i + 1)
     }
-  }, [qIndex, details, level])
+  }, [qIndex, details, isChallengeMode, level])
 
   const handleRestart = useCallback(() => {
+    if (isChallengeMode) {
+      window.QuizzesHubChallenge?.openHub()
+      return
+    }
+
     window.speechSynthesis?.cancel()
     setSpeaking(false)
     setScreen('start')
-  }, [])
+  }, [isChallengeMode])
 
-  if (screen === 'start') {
+  useEffect(() => {
+    if (!isChallengeMode) return
+
+    let unsubscribe: (() => void) | undefined
+    let cancelled = false
+
+    const applyChallengeState = (state: ChallengeState) => {
+      if (cancelled) return
+      setChallengeState(state)
+      setChallengeError(null)
+      setDetails([])
+      setQIndex(Math.max(0, state.current_turn_index))
+
+      if (state.status !== 'active' || !state.current_question_key) {
+        setQuestions([])
+        setScreen('quiz')
+        return
+      }
+
+      const entry = wordBank.find((item) => item.key === state.current_question_key)
+      if (!entry) {
+        setQuestions([])
+        setChallengeError('This challenge question is not available in this quiz version.')
+        setScreen('quiz')
+        return
+      }
+
+      setQuestions([{
+        entry,
+        choices: buildChoices(entry),
+        selected: null,
+        locked: false,
+      }])
+      setQIndex(0)
+      setScreen('quiz')
+    }
+
+    void window.QuizzesHubChallengeReady?.then((state) => {
+      applyChallengeState(state)
+      unsubscribe = window.QuizzesHubChallenge?.onChange(applyChallengeState)
+    }).catch(() => {
+      setChallengeError('Could not open this challenge. Please return to Quizzes Hub.')
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [isChallengeMode])
+
+  if (screen === 'start' && !isChallengeMode) {
     return (
       <div className="quiz-shell">
         <StartScreen
@@ -263,13 +369,34 @@ export default function App({ initialLevel }: AppProps) {
       <div className="quiz-shell">
         <QuizView
           question={current}
-          qIndex={qIndex}
-          total={QUESTIONS_PER_ROUND}
+          qIndex={isChallengeMode ? challengeState?.current_turn_index ?? 0 : qIndex}
+          total={isChallengeMode ? Math.max(1, (challengeState?.current_turn_index ?? 0) + 1) : QUESTIONS_PER_ROUND}
           speaking={speaking}
           onSpeak={() => speakWord(current.entry.word)}
           onChoice={handleChoice}
           onNext={handleNext}
+          canAnswer={!isChallengeMode || Boolean(window.QuizzesHubChallenge?.canAnswer())}
+          nextLabel={isChallengeMode ? 'Back to Hub' : undefined}
+          statusText={isChallengeMode ? getChallengeStatusText(challengeState, challengeError) : undefined}
         />
+      </div>
+    )
+  }
+
+  if (isChallengeMode) {
+    return (
+      <div className="quiz-shell">
+        <div className="results-screen">
+          <div className="results-hero">
+            <Trophy className="results-icon" size={42} strokeWidth={1.8} />
+            <h2>{challengeState?.status === 'finished' ? getChallengeWinnerText(challengeState) : 'Challenge Mode'}</h2>
+            <p className="score-sub">{challengeError || 'Waiting for the challenge session.'}</p>
+            <button className="btn-primary" onClick={() => window.QuizzesHubChallenge?.openHub()}>
+              <Trophy size={18} />
+              Back to Hub
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
@@ -328,13 +455,16 @@ interface QuizViewProps {
   qIndex: number
   total: number
   speaking: boolean
+  canAnswer?: boolean
+  nextLabel?: string
   onSpeak: () => void
   onChoice: (choice: string) => void
   onNext: () => void
+  statusText?: string
 }
 
 function QuizView({
-  question, qIndex, total, speaking, onSpeak, onChoice, onNext
+  question, qIndex, total, speaking, canAnswer = true, nextLabel, onSpeak, onChoice, onNext, statusText
 }: QuizViewProps) {
   const { entry, choices, selected, locked } = question
   const isCorrect = selected === entry.word
@@ -378,7 +508,7 @@ function QuizView({
             key={c}
             className={`choice-btn ${choiceClass(c)}`}
             onClick={() => onChoice(c)}
-            disabled={locked}
+            disabled={locked || !canAnswer}
           >
             {c}
           </button>
@@ -386,6 +516,11 @@ function QuizView({
       </div>
 
       <div className="feedback-row">
+        {!locked && statusText && (
+          <div className="feedback-msg">
+            {statusText}
+          </div>
+        )}
         {locked && (
           <div className={`feedback-msg ${isCorrect ? 'correct' : 'wrong'}`}>
             {isCorrect
@@ -396,13 +531,27 @@ function QuizView({
         )}
         {locked && (
           <button className="next-btn" onClick={onNext}>
-            {qIndex + 1 < total ? 'Next' : 'Results'}
+            {nextLabel || (qIndex + 1 < total ? 'Next' : 'Results')}
             <ChevronRight size={16} />
           </button>
         )}
       </div>
     </div>
   )
+}
+
+function getChallengeStatusText(state: ChallengeState | null, error: string | null) {
+  if (error) return error
+  if (!state) return 'Loading challenge.'
+  if (state.status !== 'active') return 'Waiting for the challenge to start.'
+  if (window.QuizzesHubChallenge?.canAnswer()) return 'Your turn.'
+  const player = state.players.find((item) => item.user_id === state.current_answering_user_id)
+  return player ? `Waiting for ${player.display_name}.` : 'Waiting for the other player.'
+}
+
+function getChallengeWinnerText(state: ChallengeState | null) {
+  const winner = state?.players.find((player) => player.user_id === state.winner_id)
+  return winner ? `${winner.display_name} wins` : 'Challenge finished'
 }
 
 interface ResultsScreenProps {
