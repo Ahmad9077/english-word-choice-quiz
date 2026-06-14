@@ -102,8 +102,8 @@ function buildChoices(entry: WordEntry): string[] {
   return shuffle([entry.word, ...distractors])
 }
 
-function buildChallengeChoices(entry: WordEntry, selected?: string | null): string[] {
-  const choices = buildChoices(entry)
+function buildChallengeChoices(entry: WordEntry, turnIndex: number, selected?: string | null): string[] {
+  const choices = withSeededRandom(`${QUIZ_ID}:${entry.key}:${turnIndex}`, () => buildChoices(entry))
   if (selected && selected !== entry.word && !choices.includes(selected)) {
     choices[choices.length - 1] = selected
   }
@@ -345,7 +345,7 @@ export default function App({ initialLevel }: AppProps) {
 
       setQuestions([{
         entry,
-        choices: buildChoices(entry),
+        choices: buildChallengeChoices(entry, state.current_turn_index),
         selected: null,
         locked: false,
       }])
@@ -366,7 +366,7 @@ export default function App({ initialLevel }: AppProps) {
       setChallengeError(null)
       setQuestions([{
         entry,
-        choices: buildChallengeChoices(entry, lastTurn.answer_text),
+        choices: buildChallengeChoices(entry, lastTurn.turn_index, lastTurn.answer_text),
         selected: lastTurn.answer_text || '',
         locked: true,
       }])
@@ -379,7 +379,7 @@ export default function App({ initialLevel }: AppProps) {
       challengeRevealTimerRef.current = window.setTimeout(() => {
         challengeRevealTimerRef.current = null
         applyChallengeQuestion(state)
-      }, 2000)
+      }, 3000)
     }
 
     const applyChallengeState = (state: ChallengeState) => {
@@ -433,7 +433,7 @@ export default function App({ initialLevel }: AppProps) {
           onNext={handleNext}
           canAnswer={!isChallengeMode || Boolean(window.QuizzesHubChallenge?.canAnswer())}
           nextLabel={isChallengeMode ? 'Back to Hub' : undefined}
-          scoreText={isChallengeMode ? getChallengeScoreText(challengeState) : undefined}
+          scoreText={isChallengeMode ? getChallengeHudText(challengeState) : undefined}
           statusText={isChallengeMode ? getChallengeStatusText(challengeState, challengeError) : undefined}
         />
       </div>
@@ -617,9 +617,44 @@ function getChallengeScoreText(state: ChallengeState | null) {
   return state.players.map((player) => `${player.display_name}: ${player.wrong_count}/3`).join(' · ')
 }
 
+function getChallengeHudText(state: ChallengeState | null) {
+  if (!state) return ''
+  const currentPlayer = state.players.find((player) => player.user_id === state.current_answering_user_id)
+  const turn = currentPlayer
+    ? currentPlayer.user_id === window.QuizzesHubChallenge?.currentUserId
+      ? 'Your turn'
+      : `${currentPlayer.display_name}'s turn`
+    : 'Challenge'
+  return `${turn} · ${getChallengeScoreText(state)}`
+}
+
 function getChallengeTurnId(turn: ChallengeState['last_turn']) {
   if (!turn) return null
   return `${turn.turn_index}:${turn.answering_player_id}:${turn.answered_at || ''}`
+}
+
+function withSeededRandom<T>(seedText: string, callback: () => T) {
+  const originalRandom = Math.random
+  let seed = 2166136261
+
+  for (let index = 0; index < seedText.length; index += 1) {
+    seed ^= seedText.charCodeAt(index)
+    seed = Math.imul(seed, 16777619)
+  }
+
+  Math.random = () => {
+    seed += 0x6D2B79F5
+    let value = seed
+    value = Math.imul(value ^ value >>> 15, value | 1)
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61)
+    return ((value ^ value >>> 14) >>> 0) / 4294967296
+  }
+
+  try {
+    return callback()
+  } finally {
+    Math.random = originalRandom
+  }
 }
 
 interface ResultsScreenProps {
