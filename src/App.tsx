@@ -73,8 +73,11 @@ interface ChallengeState {
   current_turn_index: number
   last_turn?: {
     answering_player_id: string
+    answer_text?: string | null
+    answered_at?: string
     is_correct: boolean
     question_key: string
+    turn_index: number
   } | null
   players: ChallengePlayer[]
   status: 'waiting' | 'active' | 'finished' | 'abandoned'
@@ -97,6 +100,14 @@ function shuffle<T>(arr: T[]): T[] {
 function buildChoices(entry: WordEntry): string[] {
   const distractors = shuffle(entry.distractors.filter((distractor) => distractor !== entry.word)).slice(0, 3)
   return shuffle([entry.word, ...distractors])
+}
+
+function buildChallengeChoices(entry: WordEntry, selected?: string | null): string[] {
+  const choices = buildChoices(entry)
+  if (selected && selected !== entry.word && !choices.includes(selected)) {
+    choices[choices.length - 1] = selected
+  }
+  return choices
 }
 
 function scoreMessage(score: number, total: number): string {
@@ -202,6 +213,8 @@ export default function App({ initialLevel }: AppProps) {
   const [speaking, setSpeaking] = useState(false)
   const [challengeState, setChallengeState] = useState<ChallengeState | null>(null)
   const [challengeError, setChallengeError] = useState<string | null>(null)
+  const challengeLastTurnIdRef = useRef<string | null>(null)
+  const challengeRevealTimerRef = useRef<number | null>(null)
 
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null)
 
@@ -309,7 +322,7 @@ export default function App({ initialLevel }: AppProps) {
     let unsubscribe: (() => void) | undefined
     let cancelled = false
 
-    const applyChallengeState = (state: ChallengeState) => {
+    const applyChallengeQuestion = (state: ChallengeState) => {
       if (cancelled) return
       setChallengeState(state)
       setChallengeError(null)
@@ -340,7 +353,49 @@ export default function App({ initialLevel }: AppProps) {
       setScreen('quiz')
     }
 
+    const revealChallengeAnswer = (state: ChallengeState) => {
+      if (cancelled) return
+      const lastTurn = state.last_turn
+      const entry = wordBank.find((item) => item.key === lastTurn?.question_key)
+      if (!lastTurn || !entry) {
+        applyChallengeQuestion(state)
+        return
+      }
+
+      setChallengeState(state)
+      setChallengeError(null)
+      setQuestions([{
+        entry,
+        choices: buildChallengeChoices(entry, lastTurn.answer_text),
+        selected: lastTurn.answer_text || '',
+        locked: true,
+      }])
+      setQIndex(0)
+      setScreen('quiz')
+
+      if (challengeRevealTimerRef.current) {
+        window.clearTimeout(challengeRevealTimerRef.current)
+      }
+      challengeRevealTimerRef.current = window.setTimeout(() => {
+        challengeRevealTimerRef.current = null
+        applyChallengeQuestion(state)
+      }, 2000)
+    }
+
+    const applyChallengeState = (state: ChallengeState) => {
+      const turnId = getChallengeTurnId(state.last_turn)
+      if (turnId && turnId !== challengeLastTurnIdRef.current) {
+        challengeLastTurnIdRef.current = turnId
+        revealChallengeAnswer(state)
+        return
+      }
+
+      if (challengeRevealTimerRef.current) return
+      applyChallengeQuestion(state)
+    }
+
     void window.QuizzesHubChallengeReady?.then((state) => {
+      challengeLastTurnIdRef.current = getChallengeTurnId(state.last_turn)
       applyChallengeState(state)
       unsubscribe = window.QuizzesHubChallenge?.onChange(applyChallengeState)
     }).catch(() => {
@@ -349,6 +404,7 @@ export default function App({ initialLevel }: AppProps) {
 
     return () => {
       cancelled = true
+      if (challengeRevealTimerRef.current) window.clearTimeout(challengeRevealTimerRef.current)
       unsubscribe?.()
     }
   }, [isChallengeMode])
@@ -377,6 +433,7 @@ export default function App({ initialLevel }: AppProps) {
           onNext={handleNext}
           canAnswer={!isChallengeMode || Boolean(window.QuizzesHubChallenge?.canAnswer())}
           nextLabel={isChallengeMode ? 'Back to Hub' : undefined}
+          scoreText={isChallengeMode ? getChallengeScoreText(challengeState) : undefined}
           statusText={isChallengeMode ? getChallengeStatusText(challengeState, challengeError) : undefined}
         />
       </div>
@@ -460,11 +517,12 @@ interface QuizViewProps {
   onSpeak: () => void
   onChoice: (choice: string) => void
   onNext: () => void
+  scoreText?: string
   statusText?: string
 }
 
 function QuizView({
-  question, qIndex, total, speaking, canAnswer = true, nextLabel, onSpeak, onChoice, onNext, statusText
+  question, qIndex, total, speaking, canAnswer = true, nextLabel, onSpeak, onChoice, onNext, scoreText, statusText
 }: QuizViewProps) {
   const { entry, choices, selected, locked } = question
   const isCorrect = selected === entry.word
@@ -486,7 +544,7 @@ function QuizView({
             style={{ width: `${((qIndex + (locked ? 1 : 0)) / total) * 100}%` }}
           />
         </div>
-        <span className="q-counter">{qIndex + 1} / {total}</span>
+        <span className="q-counter">{scoreText || `${qIndex + 1} / ${total}`}</span>
         <span className={`tier-badge ${entry.tier}`}>{entry.tier}</span>
       </div>
 
@@ -525,7 +583,7 @@ function QuizView({
           <div className={`feedback-msg ${isCorrect ? 'correct' : 'wrong'}`}>
             {isCorrect
               ? <><CheckCircle2 size={20} /> Correct!</>
-              : <><XCircle size={20} /> The answer is <em>"{entry.word}"</em></>
+              : <><XCircle size={20} /> You chose <em>"{selected}"</em>. The answer is <em>"{entry.word}"</em></>
             }
           </div>
         )}
@@ -551,7 +609,17 @@ function getChallengeStatusText(state: ChallengeState | null, error: string | nu
 
 function getChallengeWinnerText(state: ChallengeState | null) {
   const winner = state?.players.find((player) => player.user_id === state.winner_id)
-  return winner ? `${winner.display_name} wins` : 'Challenge finished'
+  return winner ? `🎉 ${winner.display_name} wins!` : '🎉 Challenge finished'
+}
+
+function getChallengeScoreText(state: ChallengeState | null) {
+  if (!state?.players.length) return ''
+  return state.players.map((player) => `${player.display_name}: ${player.wrong_count}/3`).join(' · ')
+}
+
+function getChallengeTurnId(turn: ChallengeState['last_turn']) {
+  if (!turn) return null
+  return `${turn.turn_index}:${turn.answering_player_id}:${turn.answered_at || ''}`
 }
 
 interface ResultsScreenProps {
