@@ -291,7 +291,6 @@ export default function App({ initialLevel }: AppProps) {
 
   const handleNext = useCallback(() => {
     if (isChallengeMode) {
-      window.QuizzesHubChallenge?.openHub()
       return
     }
 
@@ -307,7 +306,6 @@ export default function App({ initialLevel }: AppProps) {
 
   const handleRestart = useCallback(() => {
     if (isChallengeMode) {
-      window.QuizzesHubChallenge?.openHub()
       return
     }
 
@@ -432,7 +430,7 @@ export default function App({ initialLevel }: AppProps) {
           onChoice={handleChoice}
           onNext={handleNext}
           canAnswer={!isChallengeMode || Boolean(window.QuizzesHubChallenge?.canAnswer())}
-          nextLabel={isChallengeMode ? 'Back to Hub' : undefined}
+          hideNextAction={isChallengeMode}
           scoreText={isChallengeMode ? getChallengeHudText(challengeState) : undefined}
           statusText={isChallengeMode ? getChallengeStatusText(challengeState, challengeError) : undefined}
         />
@@ -448,10 +446,6 @@ export default function App({ initialLevel }: AppProps) {
             <Trophy className="results-icon" size={42} strokeWidth={1.8} />
             <h2>{challengeState?.status === 'finished' ? getChallengeWinnerText(challengeState) : 'Challenge Mode'}</h2>
             <p className="score-sub">{challengeError || 'Waiting for the challenge session.'}</p>
-            <button className="btn-primary" onClick={() => window.QuizzesHubChallenge?.openHub()}>
-              <Trophy size={18} />
-              Back to Hub
-            </button>
           </div>
         </div>
       </div>
@@ -513,7 +507,7 @@ interface QuizViewProps {
   total: number
   speaking: boolean
   canAnswer?: boolean
-  nextLabel?: string
+  hideNextAction?: boolean
   onSpeak: () => void
   onChoice: (choice: string) => void
   onNext: () => void
@@ -522,7 +516,7 @@ interface QuizViewProps {
 }
 
 function QuizView({
-  question, qIndex, total, speaking, canAnswer = true, nextLabel, onSpeak, onChoice, onNext, scoreText, statusText
+  question, qIndex, total, speaking, canAnswer = true, hideNextAction = false, onSpeak, onChoice, onNext, scoreText, statusText
 }: QuizViewProps) {
   const { entry, choices, selected, locked } = question
   const isCorrect = selected === entry.word
@@ -587,9 +581,9 @@ function QuizView({
             }
           </div>
         )}
-        {locked && (
+        {locked && !hideNextAction && (
           <button className="next-btn" onClick={onNext}>
-            {nextLabel || (qIndex + 1 < total ? 'Next' : 'Results')}
+            {qIndex + 1 < total ? 'Next' : 'Results'}
             <ChevronRight size={16} />
           </button>
         )}
